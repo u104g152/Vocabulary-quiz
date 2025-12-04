@@ -8,10 +8,12 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- 載入 Firebase 模組 -->
     <script type="module">
+        // 確保在模組載入時，將所有 Firebase 函式暴露給 window
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, getDocs, setDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
         // 將必要的 Firebase 函數暴露給全域範圍
         window.firebase = {
             initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
@@ -198,24 +200,49 @@
          */
         async function initApp() {
             try {
-                let config = firebaseConfig; // 使用提供的設定
-
-                if (!window.firebase) {
-                    throw new Error('Firebase script missing.');
-                }
-                
-                // 如果設定遺失 (在 Canvas 外運行)，則使用模擬設定並啟用 Mock 模式
-                if (!config) {
-                    console.warn("WARN: Firebase configuration missing. Using mock setup. Data saving will be disabled.");
-                    config = {
-                        apiKey: "mock-api-key",
-                        authDomain: "mock-project.firebaseapp.com",
-                        projectId: "mock-project-id",
-                        storageBucket: "mock-project-id.appspot.com",
-                        messagingSenderId: "123456789012",
-                        appId: "1:123456789012:web:abcdef1234567890"
-                    };
+                // --- 1. 檢查 Firebase API 模組是否載入 ---
+                if (!window.firebase || !window.firebase.initializeApp) {
+                    console.error("Firebase 模組未載入。直接進入 Pure Offline Mode.");
+                    
+                    // 立即切換到 純離線模式
                     useMockFirebase = true;
+                    // 產生一個隨機 ID
+                    userId = 'OFFLINE_USER_' + crypto.randomUUID(); 
+                    userIdDisplay.textContent = `User ID: ${userId} (純離線模式)`;
+                    
+                    // 初始化單字庫
+                    fullVocabularyStats = BASE_VOCABULARY.map(word => ({
+                        ...word,
+                        reviewWeight: 3, 
+                        correctCount: 0,
+                        incorrectCount: 0,
+                        skipCount: 0,
+                        docId: word.word
+                    }));
+
+                    selectNextQuestion(); 
+                    setupListeners();
+                    directionDisplay.textContent = '【離線模式】 無法儲存進度';
+                    // 完成載入
+                    loadingSpinner.classList.add('opacity-0', 'pointer-events-none');
+                    return; // 立即退出，避免執行 Firebase 相關程式碼
+                }
+
+
+                // --- 2. 正常 Firebase 流程 (如果 Firebase API 已載入) ---
+                let config = firebaseConfig; 
+                let offlineModeReason = '';
+
+                // 如果 Canvas 環境未提供配置 (本地運行)，啟用 Mock 模式
+                if (!config) {
+                    offlineModeReason = '配置遺失';
+                    useMockFirebase = true;
+                    // 使用虛擬配置，讓 initializeApp 順利執行
+                    config = { apiKey: "mock", projectId: "mock", authDomain: "mock" }; 
+                }
+
+                if (useMockFirebase) {
+                    console.warn(`WARN: Firebase configuration missing. Using mock setup. Data saving will be disabled. Reason: ${offlineModeReason}`);
                 }
 
                 window.firebase.setLogLevel('debug');
@@ -224,12 +251,15 @@
                 auth = window.firebase.getAuth(app);
 
                 // 認證
-                // 只有在非 Mock 模式下才嘗試使用 custom token 登入
-                if (initialAuthToken && !useMockFirebase) { 
-                    await window.firebase.signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await window.firebase.signInAnonymously(auth);
-                }
+                const authPromise = initialAuthToken && !useMockFirebase
+                    ? window.firebase.signInWithCustomToken(auth, initialAuthToken)
+                    : window.firebase.signInAnonymously(auth);
+
+                await authPromise.catch(e => {
+                    console.error("Firebase Sign-in Failed:", e);
+                    // 認證失敗，但我們仍然讓 onAuthStateChanged 監聽器來處理後續狀態
+                });
+
 
                 // 註冊認證狀態變更監聽器
                 window.firebase.onAuthStateChanged(auth, async (user) => {
@@ -242,35 +272,36 @@
                             vocabCollectionRef = window.firebase.collection(db, `artifacts/${appId}/users/${userId}/vocab_stats`);
                             await loadAndMergeVocabulary();
                         } else {
-                            // Mock 模式：初始化基本單字庫，所有單字權重為 3 (未學會)
+                            // Mock 模式：初始化基本單字庫
                             fullVocabularyStats = BASE_VOCABULARY.map(word => ({
-                                ...word,
-                                reviewWeight: 3, 
-                                correctCount: 0,
-                                incorrectCount: 0,
-                                skipCount: 0,
-                                docId: word.word
+                                ...word, reviewWeight: 3, correctCount: 0, incorrectCount: 0, skipCount: 0, docId: word.word
                             }));
                             console.log(`單字庫載入完成 (Mock Mode)。總單字數: ${fullVocabularyStats.length}`);
+                            directionDisplay.textContent = `【離線模式】 (原因: ${offlineModeReason}) 無法儲存進度`;
                         }
                        
                         selectNextQuestion(); // 開始第一回合
                         setupListeners();
 
-                        if (useMockFirebase) {
-                            // 在 UI 上顯示離線警告
-                            directionDisplay.textContent += ' (離線模式：無法儲存進度)';
-                        }
                     } else {
-                        // 處理未認證狀態
+                        // 認證失敗，但在 Mock 模式下，我們已經初始化了單字庫
                         userIdDisplay.textContent = 'User ID: N/A (Authentication Failed)';
                     }
                     loadingSpinner.classList.add('opacity-0', 'pointer-events-none');
                 });
             } catch (error) {
-                console.error("應用程式初始化錯誤:", error);
-                // 不使用 alert()，改用 console 記錄錯誤
-                console.error('初始化失敗，請檢查網路連線或配置。');
+                console.error("應用程式初始化發生嚴重錯誤，執行最終安全離線模式:", error);
+                
+                // 最終的安全回退機制，確保程式碼不會崩潰
+                useMockFirebase = true;
+                userId = 'OFFLINE_USER_' + crypto.randomUUID();
+                userIdDisplay.textContent = `User ID: ${userId} (最終安全離線模式)`;
+                fullVocabularyStats = BASE_VOCABULARY.map(word => ({
+                    ...word, reviewWeight: 3, correctCount: 0, incorrectCount: 0, skipCount: 0, docId: word.word
+                }));
+                selectNextQuestion();
+                setupListeners();
+                directionDisplay.textContent = '【連線失敗】 請檢查網路或設定';
                 loadingSpinner.classList.add('opacity-0', 'pointer-events-none');
             }
         }
@@ -399,7 +430,7 @@
             
             // 如果是離線模式，加上警告
             if (useMockFirebase) {
-                 currentDirectionText += ' (離線模式：無法儲存進度)';
+                 currentDirectionText += ' (無法儲存進度)';
             }
 
             if (currentDirection === 'E2C') {
