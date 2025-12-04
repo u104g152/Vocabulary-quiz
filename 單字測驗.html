@@ -168,6 +168,7 @@
         let score = 0;
         let totalQuestions = 0;
         let isQuestionAnswered = false;
+        let useMockFirebase = false; // 新增：標記是否在模擬環境中執行
         
         // 儲存所有單字及其學習統計
         let fullVocabularyStats = []; 
@@ -197,18 +198,34 @@
          */
         async function initApp() {
             try {
-                // 檢查 Firebase 模組是否正確載入
-                if (!window.firebase || !firebaseConfig) {
-                    throw new Error('Firebase Configuration or script missing.');
+                let config = firebaseConfig; // 使用提供的設定
+
+                if (!window.firebase) {
+                    throw new Error('Firebase script missing.');
                 }
                 
+                // 如果設定遺失 (在 Canvas 外運行)，則使用模擬設定並啟用 Mock 模式
+                if (!config) {
+                    console.warn("WARN: Firebase configuration missing. Using mock setup. Data saving will be disabled.");
+                    config = {
+                        apiKey: "mock-api-key",
+                        authDomain: "mock-project.firebaseapp.com",
+                        projectId: "mock-project-id",
+                        storageBucket: "mock-project-id.appspot.com",
+                        messagingSenderId: "123456789012",
+                        appId: "1:123456789012:web:abcdef1234567890"
+                    };
+                    useMockFirebase = true;
+                }
+
                 window.firebase.setLogLevel('debug');
-                const app = window.firebase.initializeApp(firebaseConfig);
+                const app = window.firebase.initializeApp(config);
                 db = window.firebase.getFirestore(app);
                 auth = window.firebase.getAuth(app);
 
                 // 認證
-                if (initialAuthToken) {
+                // 只有在非 Mock 模式下才嘗試使用 custom token 登入
+                if (initialAuthToken && !useMockFirebase) { 
                     await window.firebase.signInWithCustomToken(auth, initialAuthToken);
                 } else {
                     await window.firebase.signInAnonymously(auth);
@@ -219,10 +236,31 @@
                     if (user) {
                         userId = user.uid;
                         userIdDisplay.textContent = `User ID: ${userId}`;
-                        vocabCollectionRef = window.firebase.collection(db, `artifacts/${appId}/users/${userId}/vocab_stats`);
-                        await loadAndMergeVocabulary();
+
+                        if (!useMockFirebase) {
+                            // 真實環境：設定 collection reference 並載入統計資料
+                            vocabCollectionRef = window.firebase.collection(db, `artifacts/${appId}/users/${userId}/vocab_stats`);
+                            await loadAndMergeVocabulary();
+                        } else {
+                            // Mock 模式：初始化基本單字庫，所有單字權重為 3 (未學會)
+                            fullVocabularyStats = BASE_VOCABULARY.map(word => ({
+                                ...word,
+                                reviewWeight: 3, 
+                                correctCount: 0,
+                                incorrectCount: 0,
+                                skipCount: 0,
+                                docId: word.word
+                            }));
+                            console.log(`單字庫載入完成 (Mock Mode)。總單字數: ${fullVocabularyStats.length}`);
+                        }
+                       
                         selectNextQuestion(); // 開始第一回合
                         setupListeners();
+
+                        if (useMockFirebase) {
+                            // 在 UI 上顯示離線警告
+                            directionDisplay.textContent += ' (離線模式：無法儲存進度)';
+                        }
                     } else {
                         // 處理未認證狀態
                         userIdDisplay.textContent = 'User ID: N/A (Authentication Failed)';
@@ -241,6 +279,9 @@
          * 從 Firestore 載入使用者統計資料並與基本單字庫合併
          */
         async function loadAndMergeVocabulary() {
+            // 如果是 Mock 模式，則跳過 Firestore 載入
+            if (useMockFirebase || !vocabCollectionRef) return;
+
             try {
                 const snapshot = await window.firebase.getDocs(vocabCollectionRef);
                 const firestoreStats = {};
@@ -282,7 +323,13 @@
          * @param {Object} wordStat - 包含 docId 和更新數據的單字統計物件
          */
         async function saveWordStat(wordStat) {
-            if (!vocabCollectionRef || !wordStat.docId) return;
+            // 如果是 Mock 模式或沒有 collection reference，則跳過儲存
+            if (useMockFirebase || !vocabCollectionRef || !wordStat.docId) {
+                if (useMockFirebase) {
+                    console.log(`[Mock Mode] Skipped saving stats for: ${wordStat.word}`);
+                }
+                return;
+            }
 
             // 只儲存持久化的欄位
             const dataToSave = {
@@ -348,15 +395,21 @@
          */
         function renderQuestion(wordObject) {
             const posDisplay = wordObject.pos ? `<span class="text-2xl opacity-80 font-normal">${wordObject.pos}</span>` : '';
+            let currentDirectionText = currentDirection === 'E2C' ? '【英翻中】' : '【中翻英】';
+            
+            // 如果是離線模式，加上警告
+            if (useMockFirebase) {
+                 currentDirectionText += ' (離線模式：無法儲存進度)';
+            }
 
             if (currentDirection === 'E2C') {
                 // 英翻中
-                directionDisplay.textContent = `【英翻中】`; 
+                directionDisplay.textContent = currentDirectionText;
                 questionDisplay.innerHTML = `${wordObject.word} ${posDisplay}`; // 顯示英文單字和詞性
                 answerInput.placeholder = '請輸入中文解釋...';
             } else {
                 // 中翻英
-                directionDisplay.textContent = `【中翻英】`; 
+                directionDisplay.textContent = currentDirectionText; 
                 questionDisplay.innerHTML = `${wordObject.meaning} ${posDisplay}`; // 顯示中文解釋和詞性
                 answerInput.placeholder = '請輸入英文單字...';
             }
@@ -434,7 +487,7 @@
             const correctPOS = currentWordStat.pos;
             answerDisplay.innerHTML = `正確答案：<span class="font-black">${correctAnswer}</span> <span class="text-base font-normal opacity-70">${correctPOS}</span>`;
             
-            // 更新單字統計資料
+            // 更新單字統計資料 (在 Mock 模式下會自動跳過儲存)
             saveWordStat(currentWordStat);
 
             // 讓使用者可以按 Enter 鍵進行下一題
