@@ -103,6 +103,7 @@
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // 核心單字庫 (用於初始化)
+        // *** 請將您的 3000 個單字列表替換到下方 BASE_VOCABULARY 變數中 ***
         const BASE_VOCABULARY = [
             { word: "apple", meaning: "蘋果", pos: "(n.)" },
             { word: "book", meaning: "書本", pos: "(n.)" },
@@ -129,6 +130,10 @@
             { word: "language", meaning: "語言", pos: "(n.)" },
             { word: "believe", meaning: "相信", pos: "(v.)" },
             { word: "difference", meaning: "差異", pos: "(n.)" },
+            // 在此處加入更多單字以達到 3000 個，格式保持一致
+            { word: "algorithm", meaning: "演算法", pos: "(n.)" },
+            { word: "protocol", meaning: "協定", pos: "(n.)" },
+            { word: "efficient", meaning: "效率高的", pos: "(adj.)" },
         ];
 
         // --- 應用程式狀態 ---
@@ -147,8 +152,11 @@
 
         // --- Firebase 配置與環境變數處理 ---
 
-        // 1. *** 如果您將此文件匯出並作為獨立網頁運行，請在此處填入您自己的 Firebase 項目配置 ***
-        //    請替換 "YOUR_..." 佔位符為您實際的 Firebase 專案設定！
+        // ==============================================================================
+        //  !!! 重要設定區 !!!
+        //  如果您將此文件匯出並作為獨立網頁運行 (例如在 GitHub Pages 上)，
+        //  請務必將下方的 "YOUR_..." 佔位符替換為您自己 Firebase 專案的實際配置！
+        // ==============================================================================
         const CUSTOM_FIREBASE_CONFIG = {
             apiKey: "YOUR_API_KEY_HERE", 
             authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
@@ -302,8 +310,12 @@
             setupListeners();
             
             // 檢查 Firebase 配置是否完整 (不論是 Canvas 提供的還是自訂的)
-            if (!firebaseConfig || !firebaseConfig.apiKey || appId.startsWith("YOUR_")) {
-                console.warn("Firebase config is incomplete or missing. Switching to offline mode.");
+            // 獨立模式下，檢查 CUSTOM_FIREBASE_CONFIG 是否還有 YOUR_... 佔位符
+            const isCustomConfigUsed = !hasCanvasConfig;
+            const isPlaceholder = Object.values(firebaseConfig).some(val => typeof val === 'string' && val.includes('YOUR_'));
+            
+            if (isCustomConfigUsed && isPlaceholder) {
+                console.warn("Firebase config still contains placeholders. Switching to offline mode.");
                 return initOffline();
             }
 
@@ -330,7 +342,7 @@
                         // 檢查是否使用自訂配置
                         const modeText = hasCanvasConfig 
                                         ? '您的分數和進度將被自動儲存。' 
-                                        : '使用自訂 Firebase 儲存。';
+                                        : '使用自訂 Firebase 儲存。 (請確保安全規則正確)';
                         modeInfoDisplay.textContent = modeText;
                         loadAndListenToData(); // 身份驗證成功後開始載入數據
                     } else {
@@ -341,6 +353,10 @@
 
             } catch (error) {
                 console.error("Firebase initialization failed:", error);
+                // 檢查是否是配置錯誤導致的初始化失敗
+                if (isCustomConfigUsed && error.code === 'auth/invalid-api-key') {
+                     modeInfoDisplay.textContent = '錯誤：API 金鑰無效。請檢查您的 CUSTOM_FIREBASE_CONFIG。';
+                }
                 initOffline();
             }
         }
@@ -354,10 +370,45 @@
                 return;
             }
 
-            // 1. 簡單的隨機選取單字 (之後可根據 correctCount/incorrectCount 實作智慧演算法)
-            const randomIndex = Math.floor(Math.random() * fullVocabularyStats.length);
-            currentWord = fullVocabularyStats[randomIndex];
+            // --- 智慧選題邏輯 (加權隨機) ---
+            let totalWeight = 0;
+            const weightedWords = fullVocabularyStats.map(word => {
+                const C = word.correctCount || 0;
+                const I = word.incorrectCount || 0;
+                let weight;
 
+                if (C === 0 && I === 0) {
+                    // 1. 全新單字：給予高權重 (5)，確保新單字能優先被抽到
+                    weight = 5; 
+                } else {
+                    // 2. 已學習單字：
+                    // 公式: Max(1, 1 + 5*I - 1*C)
+                    // - 答錯次數 (I) 權重 +5 (優先複習)
+                    // - 答對次數 (C) 權重 -1 (降低已掌握單字的出現頻率)
+                    // - 最低權重為 1
+                    weight = Math.max(1, 1 + (5 * I) - C);
+                }
+                
+                totalWeight += weight;
+                return { word: word, weight: weight };
+            });
+
+            // 隨機選擇一個單字 (輪盤法)
+            let randomTarget = Math.random() * totalWeight;
+            let selectedWord = null;
+
+            for (const item of weightedWords) {
+                randomTarget -= item.weight;
+                if (randomTarget <= 0) {
+                    selectedWord = item.word;
+                    break;
+                }
+            }
+            
+            // 如果出錯或總權重為零，則退回隨機選取
+            currentWord = selectedWord || fullVocabularyStats[Math.floor(Math.random() * fullVocabularyStats.length)];
+            // --- 智慧選題邏輯結束 ---
+            
             // 2. 隨機決定方向 (英翻中 E2C, 中翻英 C2E)
             currentDirection = Math.random() < 0.5 ? 'E2C' : 'C2E';
 
@@ -413,7 +464,8 @@
             }
 
             const isSkipped = userAnswer === '';
-            const isCorrect = validateAnswer(userAnswer, correctAnswer, currentDirection);
+            // 由於跳過會讓 userAnswer === ''，這裡確保跳過時不算正確或錯誤
+            const isCorrect = isSkipped ? false : validateAnswer(userAnswer, correctAnswer, currentDirection);
 
             totalQuestions++;
             
@@ -431,10 +483,12 @@
                 if (isCorrect) {
                     score++;
                     wordToUpdate.correctCount = (wordToUpdate.correctCount || 0) + 1;
-                } else if (!isSkipped) {
+                } else {
+                    // 無論是答錯 (isSkipped=false) 或跳過 (isSkipped=true)，都計入 incorrectCount (待複習)
                     wordToUpdate.incorrectCount = (wordToUpdate.incorrectCount || 0) + 1;
                 }
             }
+
 
             // 2. 儲存數據 (會觸發 onSnapshot 更新 UI)
             if (firestoreReady) {
