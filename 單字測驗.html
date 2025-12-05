@@ -97,7 +97,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
@@ -143,10 +143,19 @@
             { word: "goal", meaning: "目標", pos: "(n.)" },
         ];
 
-        // --- Firebase 專案配置 (使用提供的全域變數) ---
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        // 確保 initialAuthToken 是字串或 null
+        // --- Firebase 專案配置 (已由 00 提供的資訊填入) ---
+        // 為了確保應用程式在 Canvas 環境中能夠執行，這裡假設了 Firebase 配置和初始認證令牌會被注入。
+        // 如果這些變數在執行時沒有定義，將會使用後備值或匿名登入。
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+             apiKey: "AIzaSyDre5kpTQEn1smKRPdP92uWpC-rQmu1fHI",
+             authDomain: "english-vocabulary-quiz-3708c.firebaseapp.com",
+             projectId: "english-vocabulary-quiz-3708c",
+             storageBucket: "english-vocabulary-quiz-3708c.firebasestorage.app",
+             messagingSenderId: "1097245821158",
+             appId: "1:1097245821158:web:42adafe3bd10805cadd327"
+        };
+        
+        const appId = typeof __app_id !== 'undefined' ? __app_id : firebaseConfig.appId;
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         // --------------------------------------------------------
 
@@ -185,29 +194,26 @@
          */
         function getStatsDocRef() {
             // Path: /artifacts/{appId}/users/{userId}/vocabulary_stats/global
-            if (!db || !userId || appId === 'default-app-id') {
-                console.error("Database, User ID, or App ID is not defined for doc reference.");
+            if (!db || !userId || userId === 'N/A') {
+                console.error("Database or User ID is not defined for doc reference.");
                 return null;
             }
             return doc(db, 'artifacts', appId, 'users', userId, 'vocabulary_stats', 'global');
         }
 
         /**
-         * 啟動純離線模式（當 Firebase 或 Firestore 無法使用時）
+         * 啟動純離線模式（當 Firebase 無法使用時）
          */
         function initOffline() {
-            modeInfoDisplay.textContent = '❗ 離線模式。無法儲存進度。請刷新頁面重試。';
+            modeInfoDisplay.textContent = '❗ 離線模式。無法儲存進度。';
             userIdDisplay.textContent = 'User ID: OFFLINE_MODE (無法儲存紀錄)';
             firestoreReady = false;
             // 使用無統計數據的靜態單字庫
-            if (fullVocabularyStats.length === 0) {
-                 fullVocabularyStats = BASE_VOCABULARY.map(w => ({
-                    ...w,
-                    correctCount: 0,
-                    incorrectCount: 0,
-                }));
-            }
-           
+            fullVocabularyStats = BASE_VOCABULARY.map(w => ({
+                ...w,
+                correctCount: 0,
+                incorrectCount: 0,
+            }));
             
             if (fullVocabularyStats.length > 0) {
                 // 確保在離線模式下也能啟動 UI
@@ -225,12 +231,12 @@
         function loadAndListenToData() {
             const docRef = getStatsDocRef();
             if (!docRef) {
-                console.error("Failed to get document reference.");
+                console.error("Failed to get document reference. Switching to offline.");
                 return initOffline();
             }
             
             // 設置即時監聽
-            const unsubscribe = onSnapshot(docRef, (docSnap) => {
+            onSnapshot(docRef, (docSnap) => {
                 let data;
                 if (docSnap.exists()) {
                     data = docSnap.data();
@@ -256,14 +262,13 @@
                     });
                 } else {
                     console.log("No existing stats found. Initializing new stats and saving.");
-                    // 初始化並儲存預設統計結構
+                    // 初始化單字統計
                     fullVocabularyStats = BASE_VOCABULARY.map(w => ({
                         ...w,
                         correctCount: 0,
                         incorrectCount: 0,
                     }));
-                    // 非同步儲存，讓 onSnapshot 接收到更新
-                    saveData(); 
+                    saveData(); // 立即儲存初始狀態 (setDoc 會觸發 onSnapshot 再次更新)
                 }
 
                 // 更新 UI 顯示
@@ -275,9 +280,8 @@
                     selectNextQuestion();
                 }
             }, (error) => {
-                console.error("Error listening to Firestore (Snapshot failed):", error);
-                // 監聽失敗，取消訂閱，退回離線模式
-                unsubscribe();
+                console.error("Error listening to Firestore:", error);
+                // 監聽失敗通常意味著權限問題或其他錯誤，退回離線模式
                 initOffline(); 
             });
         }
@@ -291,21 +295,25 @@
                 return;
             }
             const docRef = getStatsDocRef();
-            if (!docRef) return;
-            
+             if (!docRef) return;
+             
+            // 只儲存必要的統計數據，避免單字定義被覆蓋
+            const vocabularyToSave = fullVocabularyStats.map(w => ({
+                word: w.word,
+                meaning: w.meaning,
+                pos: w.pos,
+                correctCount: w.correctCount || 0,
+                incorrectCount: w.incorrectCount || 0,
+            }));
+
             const dataToSave = {
                 score: score,
                 totalQuestions: totalQuestions,
-                // 儲存所有單字的統計數據
-                vocabulary: fullVocabularyStats.map(w => ({
-                    word: w.word,
-                    meaning: w.meaning,
-                    pos: w.pos,
-                    correctCount: w.correctCount || 0,
-                    incorrectCount: w.incorrectCount || 0,
-                })),
+                vocabulary: vocabularyToSave,
                 lastUpdated: new Date().toISOString()
             };
+
+            // 確保資料結構符合 Firestore 的限制
             try {
                 // 使用 setDoc + merge: true 
                 await setDoc(docRef, dataToSave, { merge: true });
@@ -319,12 +327,16 @@
          * 應用程式啟動 (主函數)
          */
         async function initApp() {
+            if (!firebaseConfig.apiKey) {
+                console.error("Firebase config is incomplete. Switching to offline mode.");
+                return initOffline();
+            }
+
             try {
-                // 減少控制台噪音，只顯示錯誤
-                setLogLevel('error'); 
                 const app = initializeApp(firebaseConfig);
                 auth = getAuth(app);
                 db = getFirestore(app);
+                setLogLevel('error'); // 減少控制台噪音
 
                 // 使用 onAuthStateChanged 監聽器來驅動所有後續流程
                 onAuthStateChanged(auth, async (user) => {
@@ -336,27 +348,28 @@
 
                         modeInfoDisplay.textContent = '🚀 連線成功！您的分數和進度將被自動儲存。';
                         
-                        // 2. 載入數據 (onSnapshot)
+                        // 2. 載入數據
                         loadAndListenToData(); 
                     } else {
-                        // 3. 尚未登入或登出 (或登入失敗)
+                        // 3. 尚未登入，嘗試匿名登入或使用 customToken 登入
                         if (!initialAuthCheckComplete) {
-                            // 首次檢查時，嘗試登入
-                            try {
+                             try {
                                 if (initialAuthToken) {
+                                    const { signInWithCustomToken } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js");
                                     await signInWithCustomToken(auth, initialAuthToken);
                                 } else {
                                     await signInAnonymously(auth);
                                 }
                             } catch (e) {
-                                // 登入失敗：立即切換至離線模式
-                                console.error("Sign-in attempt failed, falling back to OFFLINE_MODE:", e);
-                                initOffline(); 
+                                console.warn("Authentication failed, attempting offline mode:", e);
+                                initOffline(); // 無法登入則進入離線模式
                             }
-                        } else {
-                            // 非首次檢查，且沒有 user (可能是登出或首次嘗試失敗後)
+                        } else if (!auth.currentUser) {
+                            // 如果 initialAuthCheckComplete 為 true 但沒有 user (例如登出或登入失敗後的回調)，
+                            // 則確認是否已進入離線模式。
                             if (!firestoreReady) {
-                                console.error("Auth session not established or lost. Maintaining OFFLINE_MODE.");
+                                console.error("Auth process failed permanently. Running in OFFLINE_MODE.");
+                                initOffline();
                             }
                         }
                     }
@@ -370,7 +383,7 @@
         }
 
         /**
-         * 選擇下一題的單字與抽查方向 (智慧選題邏輯)
+         * 選擇下一題的單字與抽查方向
          */
         function selectNextQuestion() {
             if (fullVocabularyStats.length === 0) {
@@ -389,7 +402,7 @@
                     // 1. 全新單字：給予高權重 (5)，確保新單字能優先被抽到
                     weight = 5; 
                 } else {
-                    // 2. 已學習單字：公式: Max(1, 1 + 5*I - 1*C) - 答錯越多，權重越高
+                    // 2. 已學習單字：公式: Max(1, 1 + 5*I - 1*C) - 答錯越多，權重越高，越容易被抽到
                     weight = Math.max(1, 1 + (5 * I) - C);
                 }
                 
@@ -443,11 +456,11 @@
             if (currentDirection === 'E2C') {
                 directionDisplay.textContent = currentDirectionText;
                 questionDisplay.innerHTML = `${wordObject.word} ${posDisplay}`; 
-                answerInput.placeholder = '請輸入中文解釋...';
+                answerInput.placeholder = '請輸入中文解釋 (允許相似或簡短回答)...';
             } else {
                 directionDisplay.textContent = currentDirectionText; 
                 questionDisplay.innerHTML = `${wordObject.meaning} ${posDisplay}`; 
-                answerInput.placeholder = '請輸入英文單字...';
+                answerInput.placeholder = '請輸入英文單字 (允許輕微拼寫錯誤)...';
             }
         }
 
@@ -464,7 +477,7 @@
             if (currentDirection === 'E2C') {
                 correctAnswer = currentWordStat.meaning; 
             } else {
-                correctAnswer = currentWordStat.word; 
+                correctAnswer = currentWordStat.word;    
             }
 
             const isSkipped = userAnswer === '';
@@ -509,7 +522,7 @@
                 feedbackMessage.classList.add('skip-feedback-text');
                 quizCard.classList.add('skip-feedback-bg');
             } else if (isCorrect) {
-                feedbackMessage.textContent = '✅ 太棒了，答案正確！';
+                feedbackMessage.textContent = '✅ 太棒了，答案正確！(模糊比對通過)';
                 feedbackMessage.classList.remove('incorrect-feedback-text', 'skip-feedback-text');
                 feedbackMessage.classList.add('correct-feedback-text'); 
                 quizCard.classList.add('correct-feedback-bg'); 
@@ -523,7 +536,7 @@
             // 4. 顯示正確答案
             const correctPOS = currentWordStat.pos;
             // 針對中翻英，答案是英文單字，所以顯示單字本身；針對英翻中，答案是中文意思。
-            const displayAnswer = currentDirection === 'C2E' ? currentWordStat.word : currentWordStat.meaning;
+            const displayAnswer = currentDirection === 'C2E' ? currentWordStat.word + ' / ' + currentWordStat.meaning : currentWordStat.word + ' / ' + currentWordStat.meaning;
             
             answerDisplay.innerHTML = `正確答案：<span class="font-black">${displayAnswer}</span> <span class="text-base font-normal opacity-70">${correctPOS}</span>`;
 
@@ -536,57 +549,77 @@
         window.nextQuestion = function() {
             selectNextQuestion();
         }
+        
+        /**
+         * 計算兩個字串之間的 Levenshtein 距離 (編輯距離)
+         */
+        function levenshteinDistance(s1, s2) {
+            s1 = s1.toLowerCase();
+            s2 = s2.toLowerCase();
+
+            const costs = new Array();
+            for (let i = 0; i <= s1.length; i++) {
+                let lastValue = i;
+                for (let j = 0; j <= s2.length; j++) {
+                    if (i === 0) {
+                        costs[j] = j;
+                    } else if (j > 0) {
+                        let newValue = costs[j - 1];
+                        if (s1.charAt(i - 1) !== s2.charAt(j - 1)) {
+                            newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
+                        }
+                        costs[j - 1] = lastValue;
+                        lastValue = newValue;
+                    }
+                }
+                if (i > 0) {
+                    costs[s2.length] = lastValue;
+                }
+            }
+            return costs[s2.length];
+        }
+
 
         /**
-         * 答案驗證邏輯 (已修改為更寬鬆的驗證標準)
+         * 答案驗證邏輯 - 支援模糊比對
          */
         function validateAnswer(user, correct, direction) {
-            if (user.trim() === '') return false; // 確保非空
+            // 移除前後空白
+            const trimmedUser = user.trim();
 
             if (direction === 'C2E') {
-                // 1. 中翻英 (輸入：英文單字)
-                const userLower = user.toLowerCase().trim();
-                const correctLower = correct.toLowerCase().trim();
+                // --- 英文單字 (C2E) 模糊比對：使用 Levenshtein 距離 ---
+                const correctWord = correct.trim();
 
-                // a. 精確匹配
-                if (userLower === correctLower) return true;
-
-                // b. 模糊匹配 (基於單字長度給予拼寫錯誤容忍度)
-                const maxLength = Math.max(userLower.length, correctLower.length);
-                // 容忍度計算：單字長度 <= 4 容忍 1 個錯誤；單字長度 > 4 容忍 2 個錯誤
-                const tolerance = maxLength <= 4 ? 1 : 2;
-
-                // 檢查長度差異是否在容忍範圍內
-                if (Math.abs(userLower.length - correctLower.length) <= tolerance) {
-                    
-                    // ******* 簡化相似度檢查 (替代 Levenshtein) *******
-                    const checkLength = Math.min(3, correctLower.length);
-                    // 檢查正確答案的前N個字母是否出現在使用者輸入中，且長度相似
-                    if (userLower.includes(correctLower.substring(0, checkLength))) {
-                        return true;
-                    }
-                    // ***********************************************
+                // 1. 允許的最大編輯距離
+                // 規則：長度 <= 4 允許距離 0 (嚴格); 4 < 長度 <= 8 允許距離 1; 長度 > 8 允許距離 2
+                let maxDistance = 0;
+                if (correctWord.length > 8) {
+                    maxDistance = 2;
+                } else if (correctWord.length > 4) {
+                    maxDistance = 1;
                 }
+
+                // 計算距離
+                const distance = levenshteinDistance(trimmedUser, correctWord);
                 
-                return false;
+                // 檢查是否在容許範圍內
+                return distance <= maxDistance;
 
             } else {
-                // 2. 英翻中 (輸入：中文解釋)
-                // 嚴格清洗：只保留中文字、英文字、數字
-                // 清理標點符號和非核心字符
-                const cleanUser = user.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, "").trim();
-                const cleanCorrect = correct.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, "").trim();
+                // --- 中文解釋 (E2C) 模糊比對：使用包含檢查 ---
+                
+                // 1. 清理：移除所有非中英文字元（只保留中文字、英文字母）
+                // 這是為了處理使用者輸入的標點符號或額外空格
+                const cleanUser = trimmedUser.replace(/[^a-zA-Z\u4e00-\u9fa5]/g,"").trim();
+                const cleanCorrect = correct.replace(/[^a-zA-Z\u4e00-\u9fa5]/g,"").trim();
 
-                // a. 精確匹配 (清洗後)
-                if (cleanUser === cleanCorrect) return true;
+                if (cleanUser === '' || cleanCorrect === '') return false; // 防止空字串匹配
 
-                // b. 核心詞彙包含檢查 (更寬鬆的標準)
-                // 只要一方包含另一方，且正確答案長度大於1，即算正確 (排除單一字元的誤判)
-                if (cleanCorrect.length > 1 && (cleanUser.includes(cleanCorrect) || cleanCorrect.includes(cleanUser))) {
-                    return true;
-                }
-
-                return false;
+                // 2. 寬鬆匹配邏輯：如果正確答案包含用戶答案，或用戶答案包含正確答案，則視為正確。
+                // 範例: 正確答案 '解決方案'，用戶輸入 '解決' -> 通過 (correct.includes(user))
+                // 範例: 正確答案 '跑'，用戶輸入 '跑步' -> 通過 (user.includes(correct))
+                return cleanCorrect.includes(cleanUser) || cleanUser.includes(cleanCorrect);
             }
         }
         
@@ -609,8 +642,8 @@
 
         // 應用程式啟動
         window.onload = () => {
-            setupListeners(); // 先設置監聽器，確保 Enter 鍵可用
-            initApp();
+             setupListeners(); // 先設置監聽器，確保 Enter 鍵可用
+             initApp();
         };
     </script>
 </body>
