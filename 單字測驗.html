@@ -71,9 +71,9 @@
         <!-- 輸入與操作區 -->
         <div class="mt-6">
             <input type="text" id="answer-input"
-                   class="w-full p-4 border-2 border-gray-300 rounded-xl focus:ring-4 focus:ring-blue-400 focus:border-blue-400 transition duration-150 shadow-md text-lg"
-                   placeholder="輸入您的答案..."
-                   autocomplete="off">
+                    class="w-full p-4 border-2 border-gray-300 rounded-xl focus:ring-4 focus:ring-blue-400 focus:border-blue-400 transition duration-150 shadow-md text-lg"
+                    placeholder="輸入您的答案..."
+                    autocomplete="off">
 
             <!-- 答案反饋區 -->
             <div id="feedback-message" class="text-center font-bold text-lg mt-4 hidden"></div>
@@ -130,10 +130,19 @@
             { word: "language", meaning: "語言", pos: "(n.)" },
             { word: "believe", meaning: "相信", pos: "(v.)" },
             { word: "difference", meaning: "差異", pos: "(n.)" },
-            // 在此處加入更多單字以達到 3000 個，格式保持一致
             { word: "algorithm", meaning: "演算法", pos: "(n.)" },
             { word: "protocol", meaning: "協定", pos: "(n.)" },
             { word: "efficient", meaning: "效率高的", pos: "(adj.)" },
+            { word: "design", meaning: "設計", pos: "(n./v.)" },
+            { word: "marketing", meaning: "行銷", pos: "(n.)" },
+            { word: "creative", meaning: "有創意的", pos: "(adj.)" },
+            { word: "emotion", meaning: "情緒", pos: "(n.)" },
+            { word: "pattern", meaning: "模式", pos: "(n.)" },
+            { word: "analyze", meaning: "分析", pos: "(v.)" },
+            { word: "solution", meaning: "解決方案", pos: "(n.)" },
+            { word: "execute", meaning: "執行", pos: "(v.)" },
+            { word: "insight", meaning: "洞察力", pos: "(n.)" },
+            { word: "goal", meaning: "目標", pos: "(n.)" },
         ];
 
         // --- 應用程式狀態 ---
@@ -153,17 +162,15 @@
         // --- Firebase 配置與環境變數處理 ---
 
         // ==============================================================================
-        //  !!! 重要設定區 !!!
-        //  如果您將此文件匯出並作為獨立網頁運行 (例如在 GitHub Pages 上)，
-        //  請務必將下方的 "YOUR_..." 佔位符替換為您自己 Firebase 專案的實際配置！
+        //  !!! 重要設定區 - 已替換為您提供的 Firebase 專案配置 !!!
         // ==============================================================================
         const CUSTOM_FIREBASE_CONFIG = {
-            apiKey: "YOUR_API_KEY_HERE", 
-            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-            projectId: "YOUR_PROJECT_ID", 
-            storageBucket: "YOUR_PROJECT_ID.appspot.com",
-            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-            appId: "YOUR_APP_ID"
+            apiKey: "AIzaSyDre5kpTQE1smKRPdP92uWpC-rQmulfHI", // 從圖片中取得
+            authDomain: "english-vocabulary-quiz-3708c.firebaseapp.com", // 從圖片中取得
+            projectId: "english-vocabulary-quiz-3708c", // 從圖片中取得
+            storageBucket: "english-vocabulary-quiz-3708c.firebasestorage.com", // 從圖片中取得
+            messagingSenderId: "1097245821158", // 從圖片中取得
+            appId: "1:1097245821158:web:42adafe3bd10805cadd327" // 從圖片中取得
         };
         // 如果在 Canvas 外部運行，這是用於 Firestore 路徑的預設 App ID。
         const CUSTOM_FALLBACK_APP_ID = "standalone-vocab-quiz"; 
@@ -172,8 +179,8 @@
         const hasCanvasConfig = typeof __firebase_config !== 'undefined' && __firebase_config;
         
         const firebaseConfig = hasCanvasConfig 
-                               ? JSON.parse(__firebase_config) 
-                               : CUSTOM_FIREBASE_CONFIG;
+                                ? JSON.parse(__firebase_config) 
+                                : CUSTOM_FIREBASE_CONFIG;
         
         const appId = typeof __app_id !== 'undefined' ? __app_id : CUSTOM_FALLBACK_APP_ID;
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
@@ -341,8 +348,8 @@
                         firestoreReady = true;
                         // 檢查是否使用自訂配置
                         const modeText = hasCanvasConfig 
-                                        ? '您的分數和進度將被自動儲存。' 
-                                        : '使用自訂 Firebase 儲存。 (請確保安全規則正確)';
+                                                 ? '您的分數和進度將被自動儲存。' 
+                                                 : '連線成功！使用您的 Firebase 專案儲存資料。';
                         modeInfoDisplay.textContent = modeText;
                         loadAndListenToData(); // 身份驗證成功後開始載入數據
                     } else {
@@ -355,7 +362,7 @@
                 console.error("Firebase initialization failed:", error);
                 // 檢查是否是配置錯誤導致的初始化失敗
                 if (isCustomConfigUsed && error.code === 'auth/invalid-api-key') {
-                     modeInfoDisplay.textContent = '錯誤：API 金鑰無效。請檢查您的 CUSTOM_FIREBASE_CONFIG。';
+                    modeInfoDisplay.textContent = '錯誤：API 金鑰無效。請檢查您的 CUSTOM_FIREBASE_CONFIG。';
                 }
                 initOffline();
             }
