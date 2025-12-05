@@ -4,9 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>智慧型英文單字抽查</title>
-    <!-- 載入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 設定 Inter 字體與自訂樣式 -->
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=Noto+Sans+TC:wght@400;700&display=swap');
         :root {
@@ -55,36 +53,29 @@
 </head>
 <body class="p-4">
 
-    <!-- 主容器 -->
     <div class="w-full max-w-lg mx-auto bg-white shadow-2xl rounded-3xl p-6 sm:p-10 border-t-8 border-quiz-card-theme">
         <h1 class="text-3xl font-extrabold text-gray-900 mb-2 text-center">智慧型單字抽查挑戰</h1>
         <p id="mode-info" class="text-sm text-gray-500 mb-6 text-center">正在驗證身分並同步數據...</p>
 
-        <!-- 總分數與進度 -->
         <div class="flex justify-between items-center text-lg font-semibold text-gray-700 mb-6 p-3 bg-gray-50 rounded-xl shadow-inner">
             <span>分數：<span id="score-display" class="text-blue-600">0</span></span>
             <span>總題數：<span id="total-questions-display" class="text-blue-600">0</span></span>
         </div>
 
-        <!-- 測驗卡片區 -->
         <div id="quiz-card" class="h-48 flex flex-col justify-center items-center text-white rounded-2xl p-6 shadow-xl border-4 border-quiz-card-theme transition duration-300 quiz-card-theme">
             <p id="quiz-direction" class="text-sm opacity-80 mb-2"></p>
             <p id="quiz-question" class="text-4xl font-bold leading-snug text-center">Loading...</p>
         </div>
 
-        <!-- 正確答案顯示區 -->
         <div id="correct-answer-display" class="text-center text-xl font-bold mt-4 p-3 bg-yellow-50 text-gray-800 rounded-xl border border-yellow-300 hidden">
-            <!-- 答案將顯示在這裡 -->
-        </div>
+            </div>
 
-        <!-- 輸入與操作區 -->
         <div class="mt-6">
             <input type="text" id="answer-input"
-                    class="w-full p-4 border-2 border-gray-300 rounded-xl focus:ring-4 focus:ring-blue-400 focus:border-blue-400 transition duration-150 shadow-md text-lg"
-                    placeholder="輸入您的答案..."
-                    autocomplete="off">
+                        class="w-full p-4 border-2 border-gray-300 rounded-xl focus:ring-4 focus:ring-blue-400 focus:border-blue-400 transition duration-150 shadow-md text-lg"
+                        placeholder="輸入您的答案..."
+                        autocomplete="off">
 
-            <!-- 答案反饋區 -->
             <div id="feedback-message" class="text-center font-bold text-lg mt-4 hidden"></div>
 
             <div class="flex space-x-4 mt-4">
@@ -104,15 +95,13 @@
         </div>
     </div>
 
-    <!-- JavaScript 邏輯區塊 (使用 type="module" 支援 Firebase ES 模組) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // 核心單字庫 (用於初始化)
-        // 此處僅為範例，實際應用中應使用完整的單字列表。
         const BASE_VOCABULARY = [
             { word: "apple", meaning: "蘋果", pos: "(n.)" },
             { word: "book", meaning: "書本", pos: "(n.)" },
@@ -154,6 +143,17 @@
             { word: "goal", meaning: "目標", pos: "(n.)" },
         ];
 
+        // --- Firebase 專案配置 (已由 00 提供的資訊填入) ---
+        const firebaseConfig = {
+             apiKey: "AIzaSyDre5kpTQEn1smKRPdP92uWpC-rQmu1fHI",
+             authDomain: "english-vocabulary-quiz-3708c.firebaseapp.com",
+             projectId: "english-vocabulary-quiz-3708c",
+             storageBucket: "english-vocabulary-quiz-3708c.firebasestorage.app",
+             messagingSenderId: "1097245821158",
+             appId: "1:1097245821158:web:42adafe3bd10805cadd327"
+        };
+        // --------------------------------------------------------
+
         // --- 應用程式狀態 ---
         let db;
         let auth;
@@ -170,15 +170,9 @@
         // 儲存從 Firestore 載入或初始化的帶有統計數據的單字列表
         let fullVocabularyStats = []; 
 
-        // --- Firebase 配置與環境變數處理 ---
-        // 優先使用 Canvas 環境變數，確保在協作環境中運作正常。
-        const firebaseConfig = typeof __firebase_config !== 'undefined' 
-                                 ? JSON.parse(__firebase_config) 
-                                 : {}; // 使用空對象，如果沒有環境變數則初始化可能失敗
-
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-        // --- Firebase 配置與環境變數處理結束 ---
+        // 從配置中提取 appId
+        const appId = firebaseConfig.appId;
+        const initialAuthToken = null; 
 
         // --- UI 元素 ---
         const questionDisplay = document.getElementById('quiz-question');
@@ -328,10 +322,10 @@
          * 應用程式啟動 (主函數)
          */
         async function initApp() {
-            // 檢查 Firebase 配置是否完整
-            if (Object.keys(firebaseConfig).length === 0) {
-                 console.error("Firebase config is missing. Switching to offline mode.");
-                 return initOffline();
+            // 檢查 Firebase 配置是否完整 (這次應該會通過)
+            if (!firebaseConfig.apiKey) {
+                console.error("Firebase config is incomplete. Switching to offline mode.");
+                return initOffline();
             }
 
             try {
@@ -340,7 +334,7 @@
                 db = getFirestore(app);
                 setLogLevel('error'); // 減少控制台噪音
 
-                // 使用 onAuthStateChanged 監聽器來驅動所有後續流程，這更健壯
+                // 使用 onAuthStateChanged 監聽器來驅動所有後續流程
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         // 1. 身份驗證成功
@@ -348,30 +342,18 @@
                         userIdDisplay.textContent = `User ID: ${userId}`;
                         firestoreReady = true;
 
-                        const modeText = initialAuthToken 
-                                            ? '連線成功！您的分數和進度將被自動儲存。' 
-                                            : '匿名連線成功！進度將被儲存。';
-                        modeInfoDisplay.textContent = modeText;
+                        modeInfoDisplay.textContent = '🚀 連線成功！您的分數和進度將被自動儲存。';
                         
                         // 2. 載入數據
                         loadAndListenToData(); 
                     } else {
-                        // 3. 身份驗證失敗或尚未完成，嘗試登入
-                        if (initialAuthToken && !auth.currentUser) {
-                             // 優先使用環境提供的 Custom Token 登入
-                            try {
-                                await signInWithCustomToken(auth, initialAuthToken);
-                            } catch (e) {
-                                console.warn("Custom token failed. Falling back to anonymous sign-in.", e);
-                                await signInAnonymously(auth);
-                            }
-                        } else if (!auth.currentUser) {
-                            // 獨立網頁或無 token 時，使用匿名登入
+                        // 3. 尚未登入，嘗試匿名登入
+                        if (!auth.currentUser) {
                             try {
                                 await signInAnonymously(auth);
                             } catch (e) {
-                                console.error("Anonymous sign-in failed:", e);
-                                initOffline(); // 無法登入則進入離線模式
+                                console.warn("Anonymous sign-in failed:", e);
+                                if (!initialAuthCheckComplete) initOffline(); // 無法登入則進入離線模式
                             }
                         }
                         
@@ -563,7 +545,7 @@
          */
         function validateAnswer(user, correct, direction) {
             if (direction === 'C2E') {
-                // 英文：不分大小寫、只考慮單字本身 (不包含可能的冠詞等，但這裡的單字庫沒有)
+                // 英文：不分大小寫、只考慮單字本身
                 return user.toLowerCase() === correct.toLowerCase();
             } else {
                 // 中文：先清除所有非中文字元（包含空格和標點符號），再檢查是否相等
@@ -571,7 +553,6 @@
                 const cleanUser = user.replace(/[^a-zA-Z\u4e00-\u9fa5]/g,"").trim();
                 const cleanCorrect = correct.replace(/[^a-zA-Z\u4e00-\u9fa5]/g,"").trim();
                 
-                // 為了讓中文答案更寬鬆，只要用戶的答案包含正確答案的**關鍵字**即可（這裡維持精確匹配，避免意外的模糊匹配）
                 return cleanUser === cleanCorrect;
             }
         }
@@ -595,8 +576,8 @@
 
         // 應用程式啟動
         window.onload = () => {
-             setupListeners(); // 先設置監聽器，確保 Enter 鍵可用
-             initApp();
+              setupListeners(); // 先設置監聽器，確保 Enter 鍵可用
+              initApp();
         };
     </script>
 </body>
