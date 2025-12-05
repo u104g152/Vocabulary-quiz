@@ -97,7 +97,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
@@ -143,17 +143,6 @@
             { word: "goal", meaning: "目標", pos: "(n.)" },
         ];
 
-        // --- Firebase 專案配置 (已由 00 提供的資訊填入) ---
-        const firebaseConfig = {
-             apiKey: "AIzaSyDre5kpTQEn1smKRPdP92uWpC-rQmu1fHI",
-             authDomain: "english-vocabulary-quiz-3708c.firebaseapp.com",
-             projectId: "english-vocabulary-quiz-3708c",
-             storageBucket: "english-vocabulary-quiz-3708c.firebasestorage.app",
-             messagingSenderId: "1097245821158",
-             appId: "1:1097245821158:web:42adafe3bd10805cadd327"
-        };
-        // --------------------------------------------------------
-
         // --- 應用程式狀態 ---
         let db;
         let auth;
@@ -165,14 +154,14 @@
         let score = 0;
         let totalQuestions = 0;
         let isQuestionAnswered = false;
-        let initialAuthCheckComplete = false;
         
         // 儲存從 Firestore 載入或初始化的帶有統計數據的單字列表
         let fullVocabularyStats = []; 
 
-        // 從配置中提取 appId
-        const appId = firebaseConfig.appId;
-        const initialAuthToken = null; 
+        // 必須從 Canvas 全域變數獲取配置
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
 
         // --- UI 元素 ---
         const questionDisplay = document.getElementById('quiz-question');
@@ -193,8 +182,8 @@
          */
         function getStatsDocRef() {
             // Path: /artifacts/{appId}/users/{userId}/vocabulary_stats/global
-            if (!db || !userId) {
-                console.error("Database or User ID is not defined for doc reference.");
+            if (!db || !userId || appId === 'default-app-id') {
+                console.error("Database, User ID, or App ID is not defined for doc reference.");
                 return null;
             }
             return doc(db, 'artifacts', appId, 'users', userId, 'vocabulary_stats', 'global');
@@ -214,32 +203,34 @@
                 incorrectCount: 0,
             }));
             
-            if (fullVocabularyStats.length > 0) {
+            if (fullVocabularyStats.length > 0 && !currentWord) {
                 // 確保在離線模式下也能啟動 UI
-                if (!currentWord) {
-                   selectNextQuestion();
-                }
-            } else {
-                questionDisplay.textContent = "單字庫為空，無法開始測驗。";
+                selectNextQuestion();
+            } else if (fullVocabularyStats.length === 0) {
+                 questionDisplay.textContent = "單字庫為空，無法開始測驗。";
             }
         }
 
         /**
          * 載入並監聽 Firestore 數據
          */
-        function loadAndListenToData() {
+        function loadAndListenToData(userUid) {
+            userId = userUid;
+            userIdDisplay.textContent = `User ID: ${userId}`;
+            firestoreReady = true;
+
             const docRef = getStatsDocRef();
             if (!docRef) {
-                console.error("Failed to get document reference.");
+                console.error("Failed to get document reference in loadAndListenToData.");
                 return initOffline();
             }
             
             // 設置即時監聽
-            onSnapshot(docRef, (docSnap) => {
+            const unsubscribe = onSnapshot(docRef, (docSnap) => {
                 let data;
                 if (docSnap.exists()) {
                     data = docSnap.data();
-                    console.log("Current data from Firestore:", data);
+                    // console.log("Current data from Firestore:", data);
                     
                     score = data.score || 0;
                     totalQuestions = data.totalQuestions || 0;
@@ -260,7 +251,7 @@
                         };
                     });
                 } else {
-                    console.log("No existing stats found. Initializing new stats and saving.");
+                    // console.log("No existing stats found. Initializing new stats and saving.");
                     // 初始化並儲存預設統計結構
                     fullVocabularyStats = BASE_VOCABULARY.map(w => ({
                         ...w,
@@ -274,12 +265,14 @@
                 scoreDisplay.textContent = score;
                 totalQuestionsDisplay.textContent = totalQuestions;
 
-                // 如果是第一次載入，開始測驗
+                // 如果是第一次載入，開始測驗 (解決單字不出來的問題)
                 if (!currentWord) {
                     selectNextQuestion();
+                    modeInfoDisplay.textContent = '✅ 連線成功！您的分數和進度將被自動儲存。';
                 }
             }, (error) => {
                 console.error("Error listening to Firestore:", error);
+                unsubscribe(); // 停止監聽
                 // 監聽失敗通常意味著權限問題或其他錯誤，退回離線模式
                 initOffline(); 
             });
@@ -312,19 +305,18 @@
             try {
                 // 使用 setDoc + merge: true 
                 await setDoc(docRef, dataToSave, { merge: true });
-                console.log("Data saved successfully.");
+                // console.log("Data saved successfully.");
             } catch (e) {
                 console.error("Error writing document: ", e);
             }
         }
 
         /**
-         * 應用程式啟動 (主函數)
+         * 應用程式啟動 (主函數) - 修正後的啟動與認證流程
          */
         async function initApp() {
-            // 檢查 Firebase 配置是否完整 (這次應該會通過)
-            if (!firebaseConfig.apiKey) {
-                console.error("Firebase config is incomplete. Switching to offline mode.");
+            if (!firebaseConfig) {
+                console.error("Firebase config is missing. Switching to offline mode.");
                 return initOffline();
             }
 
@@ -334,42 +326,52 @@
                 db = getFirestore(app);
                 setLogLevel('error'); // 減少控制台噪音
 
-                // 使用 onAuthStateChanged 監聽器來驅動所有後續流程
-                onAuthStateChanged(auth, async (user) => {
-                    if (user) {
-                        // 1. 身份驗證成功
-                        userId = user.uid;
-                        userIdDisplay.textContent = `User ID: ${userId}`;
-                        firestoreReady = true;
+                // 優先使用 Canvas 提供的 Custom Token 登入，否則使用匿名登入
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
 
-                        modeInfoDisplay.textContent = '🚀 連線成功！您的分數和進度將被自動儲存。';
-                        
-                        // 2. 載入數據
-                        loadAndListenToData(); 
+                // onAuthStateChanged 監聽器，確保在身分確定後才啟動 Firestore 數據載入
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        loadAndListenToData(user.uid);
                     } else {
-                        // 3. 尚未登入，嘗試匿名登入
-                        if (!auth.currentUser) {
-                            try {
-                                await signInAnonymously(auth);
-                            } catch (e) {
-                                console.warn("Anonymous sign-in failed:", e);
-                                if (!initialAuthCheckComplete) initOffline(); // 無法登入則進入離線模式
-                            }
-                        }
-                        
-                        // 如果已經嘗試過登入，但最終還是沒有 user，則進入離線模式
-                        if (!auth.currentUser && !initialAuthCheckComplete) {
-                            console.error("Auth process failed. Running in OFFLINE_MODE.");
-                            initOffline();
-                        }
+                        // 如果登入失敗，則退回離線模式
+                        console.error("Auth process failed. Running in OFFLINE_MODE.");
+                        initOffline();
                     }
-                    initialAuthCheckComplete = true; // 標記首次檢查完成
                 });
 
             } catch (error) {
-                console.error("Firebase initialization failed:", error);
+                console.error("Firebase initialization or sign-in failed:", error);
                 initOffline();
             }
+        }
+
+        /**
+         * 實作 Levenshtein 距離 (用於計算單字相似度)
+         */
+        function levenshteinDistance(s1, s2) {
+            const m = s1.length;
+            const n = s2.length;
+            const dp = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+
+            for (let i = 0; i <= m; i++) { dp[i][0] = i; }
+            for (let j = 0; j <= n; j++) { dp[0][j] = j; }
+
+            for (let i = 1; i <= m; i++) {
+                for (let j = 1; j <= n; j++) {
+                    const cost = (s1[i - 1] === s2[j - 1]) ? 0 : 1;
+                    dp[i][j] = Math.min(
+                        dp[i - 1][j] + 1,      // Deletion
+                        dp[i][j - 1] + 1,      // Insertion
+                        dp[i - 1][j - 1] + cost // Substitution or Match
+                    );
+                }
+            }
+            return dp[m][n];
         }
 
         /**
@@ -392,7 +394,7 @@
                     // 1. 全新單字：給予高權重 (5)，確保新單字能優先被抽到
                     weight = 5; 
                 } else {
-                    // 2. 已學習單字：公式: Max(1, 1 + 5*I - 1*C)
+                    // 2. 已學習單字：公式: Max(1, 1 + 5*I - 1*C) - 錯越多，權重越高，越容易被抽到
                     weight = Math.max(1, 1 + (5 * I) - C);
                 }
                 
@@ -412,7 +414,7 @@
                 }
             }
             
-            // 確保選到單字
+            // 確保選到單字 (若輪盤法未選中，則隨機選一個)
             currentWord = selectedWord || fullVocabularyStats[Math.floor(Math.random() * fullVocabularyStats.length)];
             // --- 智慧選題邏輯結束 ---
             
@@ -526,7 +528,7 @@
             // 4. 顯示正確答案
             const correctPOS = currentWordStat.pos;
             // 針對中翻英，答案是英文單字，所以顯示單字本身；針對英翻中，答案是中文意思。
-            const displayAnswer = currentDirection === 'C2E' ? correctAnswer : currentWordStat.word + ' / ' + currentWordStat.meaning;
+            const displayAnswer = currentDirection === 'C2E' ? currentWordStat.word : currentWordStat.meaning;
             
             answerDisplay.innerHTML = `正確答案：<span class="font-black">${displayAnswer}</span> <span class="text-base font-normal opacity-70">${correctPOS}</span>`;
 
@@ -541,19 +543,36 @@
         }
 
         /**
-         * 答案驗證邏輯
+         * 答案驗證邏輯 (包含相似度給分)
          */
         function validateAnswer(user, correct, direction) {
             if (direction === 'C2E') {
-                // 英文：不分大小寫、只考慮單字本身
-                return user.toLowerCase() === correct.toLowerCase();
-            } else {
                 // 中文：先清除所有非中文字元（包含空格和標點符號），再檢查是否相等
                 // [^\u4e00-\u9fa5] 匹配所有非中文字符 (簡體/繁體範圍)
                 const cleanUser = user.replace(/[^a-zA-Z\u4e00-\u9fa5]/g,"").trim();
                 const cleanCorrect = correct.replace(/[^a-zA-Z\u4e00-\u9fa5]/g,"").trim();
                 
-                return cleanUser === cleanCorrect;
+                // 中文答案只要包含關鍵字就算正確
+                return cleanUser.includes(cleanCorrect) || cleanCorrect.includes(cleanUser);
+            } else {
+                // 英文：實施相似度檢查 (容錯 20%)
+                const userLower = user.toLowerCase();
+                const correctLower = correct.toLowerCase();
+                
+                // 1. 嚴格檢查
+                if (userLower === correctLower) {
+                    return true;
+                }
+
+                // 2. 相似度檢查：計算 Levenshtein 距離
+                const distance = levenshteinDistance(userLower, correctLower);
+                const maxLength = Math.max(userLower.length, correctLower.length);
+                
+                // 設定最大允許的編輯距離 (約 20% 容錯率，但至少允許 1 個錯誤)
+                const maxAllowedDistance = Math.max(1, Math.ceil(maxLength * 0.2)); 
+                
+                // 如果編輯距離小於或等於最大允許距離，則判斷為相似正確
+                return distance <= maxAllowedDistance;
             }
         }
         
@@ -576,8 +595,8 @@
 
         // 應用程式啟動
         window.onload = () => {
-              setupListeners(); // 先設置監聽器，確保 Enter 鍵可用
-              initApp();
+            setupListeners(); // 先設置監聽器，確保 Enter 鍵可用
+            initApp();
         };
     </script>
 </body>
